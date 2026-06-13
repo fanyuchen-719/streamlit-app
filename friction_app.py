@@ -12,7 +12,7 @@ except KeyError:
 
 # 初始化 Gemini
 genai.configure(api_key=API_KEY)
-model = genai.GenerativeModel('gemini-1.5-flash')
+model = genai.GenerativeModel('gemini-2.5-flash')
 
 # --- 2. 網頁介面設計 ---
 st.set_page_config(page_title="靜力學 AI 助教", layout="wide")
