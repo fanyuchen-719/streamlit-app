@@ -62,3 +62,34 @@ if st.button("🚀 開始分析解題"):
                 st.markdown(response.text)
             except Exception as e:
                 st.error(f"發生錯誤：{str(e)}")
+st.divider() # 加一條分隔線讓畫面更漂亮
+st.subheader("💬 覺得哪裡怪怪的？直接糾正或提問！")
+
+# 1. 初始化對話紀錄 (讓網頁能記住你們聊過什麼)
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+
+# 2. 將過去的對話顯示在畫面上
+for msg in st.session_state.messages:
+    with st.chat_message(msg["role"]):
+        st.markdown(msg["content"])
+
+# 3. 建立底部的文字輸入框
+if user_input := st.chat_input("跟 AI 說：『你第 4 步算錯了，法向力應該是...』 或 『為什麼 fA 向上？』"):
+    
+    # 顯示使用者的訊息並存入紀錄
+    with st.chat_message("user"):
+        st.markdown(user_input)
+    st.session_state.messages.append({"role": "user", "content": user_input})
+
+    # 讓 AI 思考並回應
+    with st.chat_message("assistant"):
+        # 我們把使用者的問題，包裝成一個帶有上下文的提示詞給 AI
+        context_prompt = f"針對你剛剛解的那題靜力學題目，使用者提出疑問或糾正：『{user_input}』。請重新檢查你的計算，如果使用者說得對，請承認錯誤並給出正確算式；如果是使用者誤解，請溫柔地解釋給他聽。"
+        
+        # 呼叫模型產生回應
+        response = model.generate_content(context_prompt)
+        st.markdown(response.text)
+        
+    # 將 AI 的回應也存入紀錄
+    st.session_state.messages.append({"role": "assistant", "content": response.text})
