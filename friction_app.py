@@ -41,8 +41,8 @@ if st.button("🚀 開始乾摩擦力學分析"):
         with st.spinner("力學教授正在進行乾摩擦與平衡分析..."):
             try:
                 response = client.models.generate_content(
-                    model='gemini-1.5-flash',
-                    contents=content_list
+                model='gemini-2.5-flash',
+                contents=content_list
                 )
                 st.success("✨ 乾摩擦分析完成！")
                 st.markdown(response.text)
