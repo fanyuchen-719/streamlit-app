@@ -4,11 +4,11 @@ from google import genai
 from google.genai import types
 import time
 
-# 💡 新增：讀取金鑰池（自動抓取主要與備用金鑰）
+# 💡 讀取金鑰池（自動抓取主要與備用金鑰）
 api_keys = []
-if "GEMINI_API_KEY" in st.secrets:
+if "GEMINI_API_KEY" in st.secrets and st.secrets["GEMINI_API_KEY"]:
     api_keys.append(st.secrets["GEMINI_API_KEY"])
-if "GEMINI_API_KEY_BACKUP" in st.secrets:
+if "GEMINI_API_KEY_BACKUP" in st.secrets and st.secrets["GEMINI_API_KEY_BACKUP"]:
     api_keys.append(st.secrets["GEMINI_API_KEY_BACKUP"])
 
 # 安全檢查：至少要有一把金鑰
@@ -45,7 +45,7 @@ system_prompt = (
 # 2. 畫出歷史對話訊息
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
-        if "image" in msg and msg["image"] is not None:
+        if msg.get("image") is not None:
             st.image(msg["image"], caption="💡 本輪附帶的力學題目照片", width=400)
         st.markdown(msg["content"])
 
@@ -68,30 +68,34 @@ if user_input := st.chat_input("在這裡輸入題目，或是直接回覆：『
     if uploaded_file:
         current_image = Image.open(uploaded_file)
     
+    # 立即在畫面上顯示使用者的輸入
     with st.chat_message("user"):
         if current_image:
             st.image(current_image, caption="上傳的題目照片", width=400)
         st.markdown(user_input)
     
+    # 將使用者輸入存入歷史紀錄
     st.session_state.messages.append({
         "role": "user", 
         "content": user_input,
-        "image": current_image,
-        "has_image": current_image is not None
+        "image": current_image
     })
     
-    # 5. 打包資料
-    content_list = []
-    if current_image:
-        content_list.append(current_image)
-        
-    history_context = "【以下是歷史對話紀錄與使用者的最新回覆】\n"
+    # ─── 5. 核心修改：打包符合 Gemini 官方歷史格式的對話紀錄 ───
+    # 這樣改可以完美保留歷史對話中的「所有圖片」與「文字內容」
+    contents_history = []
     for msg in st.session_state.messages:
-        role_label = "使用者 (User)" if msg["role"] == "user" else "力學教授 (AI)"
-        img_note = "（附帶了題目照片）" if msg.get("has_image") else ""
-        history_context += f"{role_label}: {img_note}{msg['content']}\n\n"
-    
-    content_list.append(history_context)
+        parts = []
+        if msg.get("image") is not None:
+            parts.append(msg["image"])
+        parts.append(msg["content"])
+        
+        contents_history.append(
+            types.Content(
+                role="user" if msg["role"] == "user" else "model",
+                parts=parts
+            )
+        )
     
     # 6. 智慧型自動重試 + 多金鑰無縫輪替防禦罩！
     response_text = ""
@@ -99,18 +103,19 @@ if user_input := st.chat_input("在這裡輸入題目，或是直接回覆：『
     warning_placeholder = st.empty()
     
     for attempt in range(max_retries):
-        # 💡 核心黑魔法：根據嘗試次數，自動在多把金鑰之間輪流切換 (例如：第1次用Key 1, 第2次用Key 2...)
+        # 根據嘗試次數，自動在多把金鑰之間輪流切換
         key_index = attempt % len(api_keys)
         current_key = api_keys[key_index]
         
-        # 動態動態初始化當前嘗試的 Client
+        # 動態初始化當前嘗試的 Client
         current_client = genai.Client(api_key=current_key)
         
         with st.spinner(f"力學教授正在計算中... (嘗試第 {attempt + 1} 次，使用金鑰群組 {key_index + 1})"):
             try:
+                # 使用官方標準的多輪對話內容傳入 contents
                 response = current_client.models.generate_content(
                     model='gemini-2.5-flash',
-                    contents=content_list,
+                    contents=contents_history,
                     config=types.GenerateContentConfig(
                         system_instruction=system_prompt,
                         tools=[types.Tool(code_execution=types.ToolCodeExecution())]
@@ -118,7 +123,8 @@ if user_input := st.chat_input("在這裡輸入題目，或是直接回覆：『
                 )
                 response_text = response.text
                 warning_placeholder.empty()
-                break
+                break  # 成功拿到回應，跳出重試迴圈
+                
             except Exception as e:
                 error_msg = str(e)
                 
@@ -129,12 +135,10 @@ if user_input := st.chat_input("在這裡輸入題目，或是直接回覆：『
                 
                 # 🛑 狀況 A：踩到免費版每分鐘限制 (429)
                 if "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg:
-                    # 如果手頭上有大於 1 把金鑰，直接切換，不需要發呆原地等！
                     if len(api_keys) > 1:
                         warning_placeholder.warning(f"⚠️ 當前金鑰 {key_index + 1} 達到限制！正在無縫切換至下一把備用金鑰...")
-                        time.sleep(2)  # 稍微緩衝 2 秒直接進下一個迴圈換 Key 挑戰
+                        time.sleep(2)
                     else:
-                        # 只有一把 Key 的話，就只能乖乖執行深度冷卻
                         wait_time = 35 if attempt == 0 else 55
                         warning_placeholder.warning(f"🛑 只有單把金鑰且觸發限制，將於 {wait_time} 秒後自動重試...")
                         time.sleep(wait_time)
@@ -145,6 +149,7 @@ if user_input := st.chat_input("在這裡輸入題目，或是直接回覆：『
                     warning_placeholder.warning(f"⏳ Google 伺服器忙碌 (503)，將於 {wait_time} 秒後自動重新排隊...")
                     time.sleep(wait_time)
                 
+                # ❌ 狀況 C：其餘連線錯誤（例如 401 填錯）
                 else:
                     warning_placeholder.empty()
                     st.error(f"❌ 遇到非預期連線錯誤：{error_msg}")
