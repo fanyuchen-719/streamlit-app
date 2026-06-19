@@ -33,7 +33,7 @@ with st.sidebar:
 system_prompt = (
     "你是一位精通工程力學的教授，現在要專門解決『乾摩擦力 (Dry Friction)』的靜力學題目。\n"
     "請嚴格依照：1.物理參數、2.狀態假設、3.平衡方程式、4.狀態判斷(滑動或翻倒)、5.最終結論 進行拆解。\n"
-    "【極重要】如果使用者指出你的計算錯誤、公式列錯、或正負號有誤，請虛心檢查並在後續對話中給出修正後的正確解答。\n"
+    "【極重要】如果使用者指出你的計算錯誤、公式列错、或正負號有誤，請虛心檢查並在後續對話中給出修正後的正確解答。\n"
     "【計算規範】請務必多利用內建的『Python Code Execution』工具來計算任何三角函數、小數點運算或解聯立方程式，確保最終數值與課本解答完全一致。\n"
     "【⚠️絕對隱藏規範】你在後台調用 Python 工具計算時，請默默執行就好。絕對、千萬『不要』在最終的聊天回覆中用任何代碼塊（例如 ```python）把你的 Python 原始碼或 print() 的計算結果重複貼出來！請將程式碼完全隱藏，使用者只需要看到你精美乾淨的力學分析步驟與最終答案。"
 )
@@ -90,6 +90,7 @@ if user_input := st.chat_input("在這裡輸入題目，或是直接回覆修正
     max_retries = len(api_keys)
     warning_placeholder = st.empty()
     
+    # 🔄 進入金鑰輪詢迴圈
     for attempt in range(max_retries):
         current_key = api_keys[attempt]
         
@@ -105,9 +106,11 @@ if user_input := st.chat_input("在這裡輸入題目，或是直接回覆修正
                 
                 response = model.generate_content(content_list)
                 response_text = response.text
-                warning_placeholder.empty()
-                break
                 
+                if response_text:
+                    warning_placeholder.empty()
+                    break  # 🎯 成功拿到答案，直接殺出迴圈！
+                    
             except Exception as e:
                 error_msg = str(e)
                 if attempt == max_retries - 1:
@@ -115,24 +118,24 @@ if user_input := st.chat_input("在這裡輸入題目，或是直接回覆修正
                     st.error(f"❌ 所有金鑰皆嘗試失敗。請確認是否已更換為『新專案』金鑰。錯誤訊息：{error_msg}")
                     st.stop()
                 else:
+                    # ⚠️ 發生異常時僅噴出黃色警告，不中斷，等待 1.5 秒後讓迴圈自動換下一把
                     warning_placeholder.warning(f"⚠️ 金鑰 {attempt + 1} 異常，正在切換至下一把... (錯誤: {error_msg})")
                     time.sleep(1.5)
-                    if response_text:
-                            import re
-                            # 1. 挖掉帶有 ```python ... ``` 的區塊
-                            clean_text = re.sub(r'```python.*?```', '', response_text, flags=re.DOTALL)
-                            # 2. 保險起見，連單純的 ``` ... ``` 區塊也一起挖掉
-                            clean_text = re.sub(r'```.*?```', '', clean_text, flags=re.DOTALL)
-                            # 3. 修剪掉前後多餘的換行
-                            clean_text = clean_text.strip()
-                            
-                            # 顯示乾淨的力學分析結果
-                            with st.chat_message("assistant"):
-                                st.markdown(clean_text)
-                            st.session_state.messages.append({"role": "assistant", "content": clean_text})
-                            
-                    st.session_state.uploader_key += 1
-                    st.rerun()
-                    
-                    
-                        
+
+    # ─── 💡 核心修正：跳出迴圈後（代表成功拿到內容），才進行畫面渲染 ───
+    if response_text:
+        import re
+        # 1. 挖掉帶有 ```python ... ``` 的區塊
+        clean_text = re.sub(r'```python.*?```', '', response_text, flags=re.DOTALL)
+        # 2. 保險起見，連單純的 ``` ... ``` 區塊也一起挖掉
+        clean_text = re.sub(r'```.*?```', '', clean_text, flags=re.DOTALL)
+        # 3. 修剪掉前後多餘的換行
+        clean_text = clean_text.strip()
+        
+        # 顯示乾淨的力學分析結果
+        with st.chat_message("assistant"):
+            st.markdown(clean_text)
+        st.session_state.messages.append({"role": "assistant", "content": clean_text})
+        
+        st.session_state.uploader_key += 1
+        st.rerun()
