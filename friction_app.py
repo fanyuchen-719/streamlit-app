@@ -68,42 +68,38 @@ if user_input := st.chat_input("在這裡輸入題目，或是直接回覆：『
     if uploaded_file:
         current_image = Image.open(uploaded_file)
     
-    # 立即在畫面上顯示使用者的輸入
     with st.chat_message("user"):
         if current_image:
             st.image(current_image, caption="上傳的題目照片", width=400)
         st.markdown(user_input)
     
-    # 將使用者輸入存入歷史紀錄
+    # 存入 session_state 歷史紀錄
     st.session_state.messages.append({
         "role": "user", 
         "content": user_input,
         "image": current_image
     })
     
-    # ─── 5. 核心修改：打包符合 Gemini 官方歷史格式的對話紀錄 ───
-    # 這樣改可以完美保留歷史對話中的「所有圖片」與「文字內容」
-    contents_history = []
-    for msg in st.session_state.messages:
-        parts = []
-        if msg.get("image") is not None:
-            parts.append(msg["image"])
-        parts.append(msg["content"])
+    # ─── 5. 安全打包機制：避開 Pydantic ValidationError ───
+    content_list = []
+    if current_image:
+        content_list.append(current_image)
         
-        contents_history.append(
-            types.Content(
-                role="user" if msg["role"] == "user" else "model",
-                parts=parts
-            )
-        )
+    # 將歷史對話與圖片註記串成純文字 context 餵給模型
+    history_context = "【以下是歷史對話紀錄與使用者的最新回覆】\n"
+    for msg in st.session_state.messages:
+        role_label = "使用者 (User)" if msg["role"] == "user" else "力學教授 (AI)"
+        img_note = "（附帶了題目照片）" if msg.get("image") is not None else ""
+        history_context += f"{role_label}: {img_note}{msg['content']}\n\n"
     
-    # 6. 智慧型自動重試 + 多金鑰無縫輪替防禦罩！
+    content_list.append(history_context)
+    
+    # ─── 6. 智慧型自動重試 + 多金鑰無縫輪替防禦罩！ ───
     response_text = ""
     max_retries = 4
     warning_placeholder = st.empty()
     
     for attempt in range(max_retries):
-        # 根據嘗試次數，自動在多把金鑰之間輪流切換
         key_index = attempt % len(api_keys)
         current_key = api_keys[key_index]
         
@@ -112,10 +108,9 @@ if user_input := st.chat_input("在這裡輸入題目，或是直接回覆：『
         
         with st.spinner(f"力學教授正在計算中... (嘗試第 {attempt + 1} 次，使用金鑰群組 {key_index + 1})"):
             try:
-                # 使用官方標準的多輪對話內容傳入 contents
                 response = current_client.models.generate_content(
                     model='gemini-2.5-flash',
-                    contents=contents_history,
+                    contents=content_list,
                     config=types.GenerateContentConfig(
                         system_instruction=system_prompt,
                         tools=[types.Tool(code_execution=types.ToolCodeExecution())]
@@ -123,33 +118,34 @@ if user_input := st.chat_input("在這裡輸入題目，或是直接回覆：『
                 )
                 response_text = response.text
                 warning_placeholder.empty()
-                break  # 成功拿到回應，跳出重試迴圈
+                break  # 成功拿到回應，直接跳出重試迴圈
                 
             except Exception as e:
                 error_msg = str(e)
                 
+                # 如果到最後一次嘗試都失敗了，才噴錯誤訊息
                 if attempt == max_retries - 1:
                     warning_placeholder.empty()
                     st.error(f"❌ 所有備用金鑰皆嘗試失敗。請稍候重試。錯誤訊息：{error_msg}")
                     st.stop()
                 
-                # 🛑 狀況 A：踩到免費版每分鐘限制 (429)
+                # 🛑 狀況 A：踩到免費版每分鐘限制 (429 / RESOURCE_EXHAUSTED)
                 if "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg:
                     if len(api_keys) > 1:
                         warning_placeholder.warning(f"⚠️ 當前金鑰 {key_index + 1} 達到限制！正在無縫切換至下一把備用金鑰...")
-                        time.sleep(2)
+                        time.sleep(2)  # 稍微緩衝 2 秒直接進下一個迴圈換 Key 挑戰
                     else:
                         wait_time = 35 if attempt == 0 else 55
                         warning_placeholder.warning(f"🛑 只有單把金鑰且觸發限制，將於 {wait_time} 秒後自動重試...")
                         time.sleep(wait_time)
                 
-                # ⏳ 狀況 B：伺服器大塞車 (503)
+                # ⏳ 狀況 B：伺服器大塞車 (503 / UNAVAILABLE)
                 elif "503" in error_msg or "UNAVAILABLE" in error_msg:
                     wait_time = (attempt + 1) * 3
                     warning_placeholder.warning(f"⏳ Google 伺服器忙碌 (503)，將於 {wait_time} 秒後自動重新排隊...")
                     time.sleep(wait_time)
                 
-                # ❌ 狀況 C：其餘連線錯誤（例如 401 填錯）
+                # ❌ 狀況 C：其餘不可預期的連線錯誤（例如金鑰真的填錯 401）
                 else:
                     warning_placeholder.empty()
                     st.error(f"❌ 遇到非預期連線錯誤：{error_msg}")
