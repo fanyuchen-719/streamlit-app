@@ -16,14 +16,15 @@ else:
     st.error("❌ 未偵測到 API 金鑰。請檢查 Streamlit Secrets 設定。")
     st.stop()
 
-# --- 模型設定 (移除 code_execution 以防 403) ---
+# --- 模型設定 (修正 404 路徑問題，移除 tools) ---
 system_prompt = """你是一位精通工程力學的教授。
 請針對使用者上傳的題目進行受力分析、列出平衡方程式並求解。
 步驟：1.物理參數、2.狀態假設、3.平衡方程式、4.狀態判斷、5.最終結論。"""
 
 try:
+    # 💡 修正 404：明確指定模型路徑，並確保不使用 beta 功能
     model = genai.GenerativeModel(
-        model_name='gemini-1.5-flash',  # 確保每日額度充足
+        model_name='models/gemini-1.5-flash',  
         system_instruction=system_prompt
     )
 except Exception as e:
@@ -70,13 +71,12 @@ if st.button("開始計算") or user_input:
                 response = model.generate_content(content_list)
                 response_text = response.text
                 
-                # 清洗與顯示結果
+                # 清洗結果
                 clean_text = re.sub(r'```.*?```', '', response_text, flags=re.DOTALL).strip()
                 with st.chat_message("assistant"):
                     st.markdown(clean_text)
                 st.session_state.messages.append({"role": "assistant", "content": clean_text})
                 
-                # 重新整理介面
                 st.session_state.uploader_key += 1
                 st.rerun()
                 
