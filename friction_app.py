@@ -1,6 +1,7 @@
 import streamlit as st
 from PIL import Image
 from google import genai
+from google.genai import types  # 💡 新增：導入新版 API 的型態元件，用來開啟計算機工具
 import time
 
 # 讀取金鑰
@@ -10,10 +11,11 @@ except KeyError:
     st.error("❌ 未在 Streamlit 後台設定 GEMINI_API_KEY")
     st.stop()
 
+# 初始化全新 Google GenAI Client
 client = genai.Client(api_key=API_KEY)
 
 st.set_page_config(page_title="乾摩擦力 AI 聊天助教", layout="wide")
-st.title("🤖 ⚙️ 靜力學：乾摩擦力 AI 聊天解題助教")
+st.title("🤖 ⚙️ 靜力學：乾摩擦力 AI 聊天解題助教 (專業計算防護版)")
 
 # 1. 初始化聊天記憶庫與上傳防刷新機制
 if "messages" not in st.session_state:
@@ -21,7 +23,7 @@ if "messages" not in st.session_state:
 if "uploader_key" not in st.session_state:
     st.session_state.uploader_key = 0
 
-# 側邊欄只留控制按鈕，畫面變超乾淨
+# 側邊欄控制面板
 with st.sidebar:
     st.header("⚙️ 控制面板")
     if st.button("🗑️ 清空歷史對話紀錄"):
@@ -29,11 +31,12 @@ with st.sidebar:
         st.session_state.uploader_key += 1
         st.rerun()
 
-# 力學教授的靈魂人設
+# 力學教授的靈魂人設（加入引導 AI 使用計算機的指令）
 system_prompt = (
     "你是一位精通工程力學的教授，現在要專門解決『乾摩擦力 (Dry Friction)』的靜力學題目。\n"
     "請嚴格依照：1.物理參數、2.狀態假設、3.平衡方程式、4.狀態判斷(滑動或翻倒)、5.最終結論 進行拆解。\n"
-    "【極重要】如果使用者指出你的計算錯誤、公式列錯、或正負號有誤，請虛心檢查並在後續對話中給出修正後的正確解答。"
+    "【極重要】如果使用者指出你的計算錯誤、公式列錯、或正負號有誤，請虛心檢查並在後續對話中給出修正後的正確解答。\n"
+    "【計算規範】請務必多利用內建的『Python Code Execution』工具來計算任何三角函數、小數點運算或解聯立方程式，確保最終數值與課本解答完全一致。"
 )
 
 # 2. 畫出歷史對話訊息（如果是使用者傳的，照片會直接顯示在對話框裡！）
@@ -46,7 +49,6 @@ for msg in st.session_state.messages:
 st.markdown("---")
 
 # 3. 【Gemini 核心體驗】把上傳區黏在輸入框上方
-# 用動態 key 來控制，只要送出訊息，這個上傳欄位就會被強制重置清空！
 uploaded_file = st.file_uploader(
     "📎 點擊或拖曳上傳本輪題目照片（選填，送出後會自動融入對話）：", 
     type=["jpg", "jpeg", "png"],
@@ -58,7 +60,7 @@ if uploaded_file:
     st.image(uploaded_file, caption="👀 準備送出的照片預覽", width=200)
 
 # 4. 底部聊天輸入框
-if user_input := st.chat_input("在這裡輸入題目，或是直接回覆：『你第三步算錯了，正負號應該是...』"):
+if user_input := st.chat_input("在這裡輸入題目，或是直接回覆：『你傷到拉力 P 了，摩擦力方向列錯了吧...』"):
     
     # 讀取當前附加的照片
     current_image = None
@@ -80,7 +82,8 @@ if user_input := st.chat_input("在這裡輸入題目，或是直接回覆：『
     })
     
     # 5. 打包要送給 Gemini 的資料
-    content_list = [system_prompt]
+    # 💡 優化：system_prompt 改由後方 config 統一帶入，此處 content_list 只存放物件與對話上下文
+    content_list = []
     if current_image:
         content_list.append(current_image)
         
@@ -93,7 +96,7 @@ if user_input := st.chat_input("在這裡輸入題目，或是直接回覆：『
     
     content_list.append(history_context)
     
-    # 6. 自動重試 503 倒數機制（完整保留！）
+    # 6. 自動重試機制（完美融合 503 大塞車 與 429 頻率限制防禦！）
     response_text = ""
     max_retries = 4
     warning_placeholder = st.empty()
@@ -101,24 +104,32 @@ if user_input := st.chat_input("在這裡輸入題目，或是直接回覆：『
     for attempt in range(max_retries):
         with st.spinner(f"力學教授正在分析與計算中... (嘗試第 {attempt + 1} 次)"):
             try:
+                # 呼叫新版官方 SDK 語法
                 response = client.models.generate_content(
                     model='gemini-2.5-flash',
-                    contents=content_list
+                    contents=content_list,
+                    # 💡 核心注入：將設定與 Python 工具綁定
+                    config=types.GenerateContentConfig(
+                        system_instruction=system_prompt,
+                        # 核心黑魔法：強制開啟程式碼執行功能，讓 AI 寫 Python 代數幫你算答案
+                        tools=[types.Tool(code_execution=types.ToolCodeExecution())]
+                    )
                 )
                 response_text = response.text
                 warning_placeholder.empty()
                 break
             except Exception as e:
                 error_msg = str(e)
-                if "503" in error_msg and attempt < max_retries - 1:
-                    wait_time = (attempt + 1) * 2
-                    warning_placeholder.warning(f"⏳ Google 2.5 伺服器大塞車 (503)，將於 {wait_time} 秒後自動重試排隊...")
+                # 💡 強化：同時捕捉伺服器塞車(503)與免費版每分鐘20次超限(429)
+                if ("503" in error_msg or "429" in error_msg) and attempt < max_retries - 1:
+                    wait_time = (attempt + 1) * 3  # 漸進式等待：3秒、6秒、9秒
+                    warning_placeholder.warning(f"⏳ Google 伺服器忙碌或達到頻率限制 (503/429)，將於 {wait_time} 秒後自動重試排隊...")
                     time.sleep(wait_time)
                 else:
                     warning_placeholder.empty()
                     st.error(f"連線失敗：{error_msg}")
                     st.stop()
-                    
+                        
     # 7. 顯示 AI 回應並存入記憶
     if response_text:
         with st.chat_message("assistant"):
