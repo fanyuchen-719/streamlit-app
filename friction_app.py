@@ -117,20 +117,22 @@ if user_input := st.chat_input("在這裡輸入題目，或是直接回覆修正
                 else:
                     warning_placeholder.warning(f"⚠️ 金鑰 {attempt + 1} 異常，正在切換至下一把... (錯誤: {error_msg})")
                     time.sleep(1.5)
+                    if response_text:
+                            import re
+                            # 1. 挖掉帶有 ```python ... ``` 的區塊
+                            clean_text = re.sub(r'```python.*?```', '', response_text, flags=re.DOTALL)
+                            # 2. 保險起見，連單純的 ``` ... ``` 區塊也一起挖掉
+                            clean_text = re.sub(r'```.*?```', '', clean_text, flags=re.DOTALL)
+                            # 3. 修剪掉前後多餘的換行
+                            clean_text = clean_text.strip()
+                            
+                            # 顯示乾淨的力學分析結果
+                            with st.chat_message("assistant"):
+                                st.markdown(clean_text)
+                            st.session_state.messages.append({"role": "assistant", "content": clean_text})
+                            
+                    st.session_state.uploader_key += 1
+                    st.rerun()
+                    
+                    
                         
-if response_text:
-        import re
-        # 1. 挖掉帶有 ```python ... ``` 的區塊
-        clean_text = re.sub(r'```python.*?```', '', response_text, flags=re.DOTALL)
-        # 2. 保險起見，連單純的 ``` ... ``` 區塊也一起挖掉
-        clean_text = re.sub(r'```.*?```', '', clean_text, flags=re.DOTALL)
-        # 3. 修剪掉前後多餘的換行
-        clean_text = clean_text.strip()
-        
-        # 顯示乾淨的力學分析結果
-        with st.chat_message("assistant"):
-            st.markdown(clean_text)
-        st.session_state.messages.append({"role": "assistant", "content": clean_text})
-        
-st.session_state.uploader_key += 1
-st.rerun()
