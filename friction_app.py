@@ -73,7 +73,7 @@ if user_input := st.chat_input("在這裡輸入題目，或是直接回覆：『
             st.image(current_image, caption="上傳的題目照片", width=400)
         st.markdown(user_input)
     
-    # 將當前對話存入 session_state 歷史紀錄
+    # 将当前对话存入 session_state 历史纪录
     st.session_state.messages.append({
         "role": "user", 
         "content": user_input,
@@ -82,7 +82,6 @@ if user_input := st.chat_input("在這裡輸入題目，或是直接回覆：『
     })
     
     # 5. 打包要送給 Gemini 的資料
-    # 💡 優化：system_prompt 改由後方 config 統一帶入，此處 content_list 只存放物件與對話上下文
     content_list = []
     if current_image:
         content_list.append(current_image)
@@ -96,7 +95,7 @@ if user_input := st.chat_input("在這裡輸入題目，或是直接回覆：『
     
     content_list.append(history_context)
     
-    # 6. 自動重試機制（完美融合 503 大塞車 與 429 頻率限制防禦！）
+    # 6. 智慧型自動重試機制（分流防禦 503 大塞車 與 429 深度冷卻！）
     response_text = ""
     max_retries = 4
     warning_placeholder = st.empty()
@@ -108,10 +107,8 @@ if user_input := st.chat_input("在這裡輸入題目，或是直接回覆：『
                 response = client.models.generate_content(
                     model='gemini-2.5-flash',
                     contents=content_list,
-                    # 💡 核心注入：將設定與 Python 工具綁定
                     config=types.GenerateContentConfig(
                         system_instruction=system_prompt,
-                        # 核心黑魔法：強制開啟程式碼執行功能，讓 AI 寫 Python 代數幫你算答案
                         tools=[types.Tool(code_execution=types.ToolCodeExecution())]
                     )
                 )
@@ -120,14 +117,30 @@ if user_input := st.chat_input("在這裡輸入題目，或是直接回覆：『
                 break
             except Exception as e:
                 error_msg = str(e)
-                # 💡 強化：同時捕捉伺服器塞車(503)與免費版每分鐘20次超限(429)
-                if ("503" in error_msg or "429" in error_msg) and attempt < max_retries - 1:
-                    wait_time = (attempt + 1) * 3  # 漸進式等待：3秒、6秒、9秒
-                    warning_placeholder.warning(f"⏳ Google 伺服器忙碌或達到頻率限制 (503/429)，將於 {wait_time} 秒後自動重試排隊...")
+                
+                # 如果已經是最後一次嘗試都失敗了，直接噴出錯誤並停住
+                if attempt == max_retries - 1:
+                    warning_placeholder.empty()
+                    st.error(f"❌ 嘗試連線 {max_retries} 次後依然失敗。請稍候重試。錯誤訊息：{error_msg}")
+                    st.stop()
+                
+                # 🛑 狀況 A：踩到免費版每分鐘 20 次限制 (429 RESOURCE_EXHAUSTED)
+                if "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg:
+                    # 第一次失敗先忍 35 秒，第二次之後如果還被卡，直接拉長到 55 秒徹底熬過罰站期
+                    wait_time = 35 if attempt == 0 else 55
+                    warning_placeholder.warning(f"🛑 觸發免費版頻率限制 (429)！為了繞過封鎖，將於 {wait_time} 秒後自動重試，請勿重新整理網頁...")
                     time.sleep(wait_time)
+                
+                # ⏳ 狀況 B：伺服器大塞車 (503 UNAVAILABLE)
+                elif "503" in error_msg or "UNAVAILABLE" in error_msg:
+                    wait_time = (attempt + 1) * 4  # 漸進等待：4秒、8秒、12秒
+                    warning_placeholder.warning(f"⏳ Google 伺服器忙碌中 (503)，將於 {wait_time} 秒後自動重新排隊...")
+                    time.sleep(wait_time)
+                
+                # ⚠️ 狀況 C：其他突發嚴重錯誤
                 else:
                     warning_placeholder.empty()
-                    st.error(f"連線失敗：{error_msg}")
+                    st.error(f"❌ 遇到非預期連線錯誤：{error_msg}")
                     st.stop()
                         
     # 7. 顯示 AI 回應並存入記憶
