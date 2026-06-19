@@ -3,6 +3,7 @@ from PIL import Image
 from google import genai
 from google.genai import types
 import time
+import os  # 🔥 補上環境變數操作必備的庫
 
 # 💡 讀取金鑰池（自動抓取主要與備用金鑰）
 api_keys = []
@@ -103,11 +104,14 @@ if user_input := st.chat_input("在這裡輸入題目，或是直接回覆：『
         key_index = attempt % len(api_keys)
         current_key = api_keys[key_index]
         
-        # 動態初始化當前嘗試的 Client
-        current_client = genai.Client(api_key=current_key)
+        # 🔥 核心修正一：強行注入環境變數，直接打爛新版 AQ. 金鑰引發的 401 誤判 Bug
+        os.environ["GEMINI_API_KEY"] = current_key
         
         with st.spinner(f"力學教授正在計算中... (嘗試第 {attempt + 1} 次，使用金鑰群組 {key_index + 1})"):
             try:
+                # ⚠️ 核心修正二：括號內必須保持完全空白！讓它盲抓上面的環境變數，避開 SDK 內部字串檢查 Bug
+                current_client = genai.Client()
+                
                 response = current_client.models.generate_content(
                     model='gemini-2.5-flash',
                     contents=content_list,
@@ -123,7 +127,7 @@ if user_input := st.chat_input("在這裡輸入題目，或是直接回覆：『
             except Exception as e:
                 error_msg = str(e)
                 
-                # 如果到最後一次嘗試都失敗了，才噴錯誤訊息
+                # 如果到最後一次嘗試都失敗了，才噴最終錯誤訊息
                 if attempt == max_retries - 1:
                     warning_placeholder.empty()
                     st.error(f"❌ 所有備用金鑰皆嘗試失敗。請稍候重試。錯誤訊息：{error_msg}")
@@ -145,11 +149,15 @@ if user_input := st.chat_input("在這裡輸入題目，或是直接回覆：『
                     warning_placeholder.warning(f"⏳ Google 伺服器忙碌 (503)，將於 {wait_time} 秒後自動重新排隊...")
                     time.sleep(wait_time)
                 
-                # ❌ 狀況 C：其餘不可預期的連線錯誤（例如金鑰真的填錯 401）
+                # ❌ 狀況 C：其餘不可預期的錯誤（優化：不再直接死機，有多把金鑰時會嘗試換下一把）
                 else:
-                    warning_placeholder.empty()
-                    st.error(f"❌ 遇到非預期連線錯誤：{error_msg}")
-                    st.stop()
+                    if len(api_keys) > 1:
+                        warning_placeholder.warning(f"⚠️ 金鑰群組 {key_index + 1} 發生異常，正在自動嘗試切換下一把... (錯誤: {error_msg})")
+                        time.sleep(1)
+                    else:
+                        warning_placeholder.empty()
+                        st.error(f"❌ 遇到非預期連線錯誤：{error_msg}")
+                        st.stop()
                         
     # 7. 顯示 AI 回應並存入記憶
     if response_text:
